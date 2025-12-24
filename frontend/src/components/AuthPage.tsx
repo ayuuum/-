@@ -3,9 +3,11 @@ import { supabase } from '../lib/supabase';
 import { Button } from './Button';
 import { Input } from './Input';
 import { Sparkles } from 'lucide-react';
+import { PasswordReset } from './PasswordReset';
 
 export const AuthPage: React.FC = () => {
     const [isLogin, setIsLogin] = useState(true);
+    const [showPasswordReset, setShowPasswordReset] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
@@ -48,6 +50,10 @@ export const AuthPage: React.FC = () => {
             setError(err.message);
         }
     };
+
+    if (showPasswordReset) {
+        return <PasswordReset onBack={() => setShowPasswordReset(false)} />;
+    }
 
     return (
         <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50 via-white to-slate-50 px-6 py-12">
@@ -102,6 +108,18 @@ export const AuthPage: React.FC = () => {
                         {error && (
                             <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-600">
                                 {error}
+                            </div>
+                        )}
+
+                        {isLogin && (
+                            <div className="text-right">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPasswordReset(true)}
+                                    className="text-xs text-blue-600 hover:text-blue-700 hover:underline underline-offset-2 transition-colors"
+                                >
+                                    パスワードを忘れた場合
+                                </button>
                             </div>
                         )}
 

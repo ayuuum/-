@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Download, MoreVertical, Search, Filter, Maximize2, X, History, Sparkles, Loader2 } from 'lucide-react';
 import { Button } from './Button';
 import { CompareSlider } from './CompareSlider';
+import { ExportDialog } from './ExportDialog';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../store/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -13,6 +14,7 @@ export const Gallery: React.FC = () => {
     const { generations, setGenerations, updateGeneration } = useStore();
     const { success, error: showError } = useToast();
     const [selectedAsset, setSelectedAsset] = useState<Generation | null>(null);
+    const [exportAsset, setExportAsset] = useState<Generation | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [isRefining, setIsRefining] = useState(false);
     const [refiningPrompt, setRefiningPrompt] = useState('');
@@ -123,12 +125,24 @@ export const Gallery: React.FC = () => {
         }
     };
 
-    const handleDownload = async (generation: Generation) => {
+    const handleDownload = async (generation: Generation, showExportDialog = false) => {
         if (!generation.generated_url) {
             showError('画像がまだ生成されていません。');
             return;
         }
 
+        // Watermark check
+        if (generation.is_watermarked && !showExportDialog) {
+            showError('無料プランではダウンロードをご利用いただけません。プランのアップグレードをお願いします。');
+            return;
+        }
+
+        if (showExportDialog) {
+            setExportAsset(generation);
+            return;
+        }
+
+        // Quick download (default JPG)
         try {
             const response = await fetch(generation.generated_url);
             if (!response.ok) throw new Error('画像の取得に失敗しました。');
@@ -193,7 +207,7 @@ export const Gallery: React.FC = () => {
                                     <img
                                         src={asset.generated_url}
                                         alt={asset.style}
-                                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                        className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${asset.is_watermarked ? 'sepia-[0.3]' : ''}`}
                                     />
                                 ) : (
                                     <div className="w-full h-full flex items-center justify-center">
@@ -212,6 +226,12 @@ export const Gallery: React.FC = () => {
                                         )}
                                     </div>
                                 )}
+                                {asset.is_watermarked && asset.status === 'completed' && (
+                                    <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1 font-medium tracking-wider">
+                                        <Sparkles className="h-3 w-3 text-yellow-400" />
+                                        WATERMARKED
+                                    </div>
+                                )}
                                 {asset.status === 'completed' && asset.generated_url && (
                                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                         <button
@@ -221,8 +241,12 @@ export const Gallery: React.FC = () => {
                                             <Maximize2 className="h-4 w-4" />
                                         </button>
                                         <button
-                                            onClick={() => handleDownload(asset)}
-                                            className="p-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDownload(asset, true);
+                                            }}
+                                            className={`p-2.5 rounded-lg transition-colors shadow-sm ${asset.is_watermarked ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                            disabled={asset.is_watermarked}
                                         >
                                             <Download className="h-4 w-4" />
                                         </button>
@@ -279,10 +303,19 @@ export const Gallery: React.FC = () => {
                         <div className="flex-1 overflow-hidden p-6 flex items-center justify-center bg-slate-50">
                             <div className="w-full h-full">
                                 {selectedAsset.generated_url ? (
-                                    <CompareSlider
-                                        originalUrl={selectedAsset.original_url}
-                                        generatedUrl={selectedAsset.generated_url}
-                                    />
+                                    <div className="relative w-full h-full">
+                                        <CompareSlider
+                                            originalUrl={selectedAsset.original_url}
+                                            generatedUrl={selectedAsset.generated_url}
+                                        />
+                                        {selectedAsset.is_watermarked && (
+                                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-10 select-none overflow-hidden">
+                                                <div className="text-[120px] font-bold -rotate-45 whitespace-nowrap text-slate-900 tracking-[10px]">
+                                                    STAGE X PREVIEW
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 ) : (
                                     <div className="text-center">
                                         <p className="text-slate-500">画像がまだ生成されていません</p>
@@ -321,18 +354,37 @@ export const Gallery: React.FC = () => {
                                 </div>
                                 <div className="flex gap-2">
                                     <Button variant="outline" onClick={() => setSelectedAsset(null)} className="rounded-lg">閉じる</Button>
+                                    {!selectedAsset.is_watermarked && (
+                                        <Button
+                                            onClick={() => selectedAsset && handleDownload(selectedAsset, false)}
+                                            variant="outline"
+                                            className="px-4 rounded-lg font-medium"
+                                            disabled={!selectedAsset?.generated_url}
+                                        >
+                                            <Download className="h-4 w-4 mr-2" /> クイックDL
+                                        </Button>
+                                    )}
                                     <Button
-                                        onClick={() => selectedAsset && selectedAsset.generated_url && handleDownload(selectedAsset)}
-                                        className="px-6 rounded-lg font-medium"
-                                        disabled={!selectedAsset?.generated_url}
+                                        onClick={() => selectedAsset && handleDownload(selectedAsset, true)}
+                                        className={`px-6 rounded-lg font-medium ${selectedAsset.is_watermarked ? 'bg-slate-200 text-slate-500 hover:bg-slate-200' : ''}`}
+                                        disabled={!selectedAsset?.generated_url || selectedAsset.is_watermarked}
                                     >
-                                        <Download className="h-4 w-4 mr-2" /> ダウンロード
+                                        <Download className="h-4 w-4 mr-2" />
+                                        {selectedAsset.is_watermarked ? 'ダウンロード不可' : 'エクスポート'}
                                     </Button>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Export Dialog */}
+            {exportAsset && (
+                <ExportDialog
+                    generation={exportAsset}
+                    onClose={() => setExportAsset(null)}
+                />
             )}
         </div>
     );

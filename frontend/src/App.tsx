@@ -24,6 +24,14 @@ function AppContent() {
     // Handle browser navigation
     const handlePopState = () => {
       const path = window.location.pathname;
+      const hash = window.location.hash;
+      
+      // Check for password reset token
+      if (hash.includes('access_token') && hash.includes('type=recovery')) {
+        // Password reset is handled by PasswordReset component
+        return;
+      }
+      
       if (path === '/pricing') {
         setCurrentPage('pricing');
       } else if (path === '/collections') {

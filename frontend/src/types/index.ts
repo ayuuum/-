@@ -19,7 +19,8 @@ export interface Generation {
   status: GenerationStatus;
   prompt?: string;
   style: string;
-  metadata?: Record<string, any>;
+  is_watermarked?: boolean;
+  version?: number;
   created_at: string;
 }
 

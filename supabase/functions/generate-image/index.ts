@@ -31,6 +31,15 @@ Deno.serve(async (req) => {
             throw new Error('Generation not found');
         }
 
+        // 1.5 Fetch user profile to check plan
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('plan_type')
+            .eq('id', generation.user_id)
+            .single();
+
+        const isWatermarked = !profile || profile.plan_type === 'trial' || profile.plan_type === null;
+
         // 2. Update status to processing
         await supabase
             .from('generations')
@@ -83,9 +92,11 @@ Deno.serve(async (req) => {
             .update({
                 status: 'completed',
                 generated_url: generatedUrl,
+                is_watermarked: isWatermarked,
                 metadata: {
                     ...generation.metadata,
-                    gemini_analysis: analysis
+                    gemini_analysis: analysis,
+                    watermarked_at: isWatermarked ? new Date().toISOString() : null
                 }
             })
             .eq('id', generation_id);
