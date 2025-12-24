@@ -74,6 +74,30 @@ StageX/
     └── migrations/    # データベースマイグレーション
 ```
 
+## デプロイ
+
+詳細なデプロイ手順は [DEPLOYMENT.md](./DEPLOYMENT.md) を参照してください。
+
+### クイックスタート
+
+1. **Supabaseプロジェクトを作成**
+   - [Supabase](https://supabase.com)でプロジェクト作成
+   - データベースマイグレーションを実行
+   - ストレージバケットを作成
+
+2. **環境変数を設定**
+   ```env
+   VITE_SUPABASE_URL=your_supabase_url
+   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
+
+3. **フロントエンドをデプロイ**
+   - Vercel、Netlify、またはその他のホスティングサービスを使用
+   - 環境変数を設定
+   - ビルドしてデプロイ
+
+詳細は [DEPLOYMENT.md](./DEPLOYMENT.md) を参照してください。
+
 ## ライセンス
 
 MIT
