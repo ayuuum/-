@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, MoreVertical, Search, Filter, Maximize2, X, History, Sparkles, Loader2 } from 'lucide-react';
+import { Download, Search, Filter, Maximize2, X, History, Sparkles, Loader2, Trash2, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { Button } from './Button';
 import { CompareSlider } from './CompareSlider';
 import { ExportDialog } from './ExportDialog';
@@ -7,7 +7,7 @@ import { useStore } from '../store/useStore';
 import { useAuth } from '../store/AuthContext';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../hooks/useToast';
-import type { Generation } from '../types';
+import type { Generation, GenerationStatus } from '../types';
 
 export const Gallery: React.FC = () => {
     const { user } = useAuth();
@@ -20,6 +20,14 @@ export const Gallery: React.FC = () => {
     const [refiningPrompt, setRefiningPrompt] = useState('');
     const [loading, setLoading] = useState(true);
     const [filteredGenerations, setFilteredGenerations] = useState<Generation[]>([]);
+    
+    // Filter states
+    const [showFilters, setShowFilters] = useState(false);
+    const [selectedStyle, setSelectedStyle] = useState<string>('all');
+    const [selectedStatus, setSelectedStatus] = useState<GenerationStatus | 'all'>('all');
+    const [dateRange, setDateRange] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
+    const [customStartDate, setCustomStartDate] = useState('');
+    const [customEndDate, setCustomEndDate] = useState('');
 
     // Keyboard shortcut for search
     useEffect(() => {
@@ -87,18 +95,73 @@ export const Gallery: React.FC = () => {
         };
     }, [user, generations.length]); // Added length to dependency to ensure subscription updates correctly
 
-    // Filter generations by search query
+    // Get unique styles for filter
+    const availableStyles = React.useMemo(() => {
+        const styles = new Set(generations.map(g => g.style));
+        return Array.from(styles).sort();
+    }, [generations]);
+
+    // Filter generations by search query and filters
     useEffect(() => {
-        if (!searchQuery.trim()) {
-            setFilteredGenerations(generations);
-        } else {
-            setFilteredGenerations(
-                generations.filter(gen =>
-                    gen.style.toLowerCase().includes(searchQuery.toLowerCase())
-                )
+        let filtered = [...generations];
+
+        // Search filter
+        if (searchQuery.trim()) {
+            filtered = filtered.filter(gen =>
+                gen.style.toLowerCase().includes(searchQuery.toLowerCase())
             );
         }
-    }, [searchQuery, generations]);
+
+        // Style filter
+        if (selectedStyle !== 'all') {
+            filtered = filtered.filter(gen => gen.style === selectedStyle);
+        }
+
+        // Status filter
+        if (selectedStatus !== 'all') {
+            filtered = filtered.filter(gen => gen.status === selectedStatus);
+        }
+
+        // Date filter
+        if (dateRange !== 'all') {
+            const now = new Date();
+            let startDate: Date;
+
+            switch (dateRange) {
+                case 'today':
+                    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    break;
+                case 'week':
+                    startDate = new Date(now);
+                    startDate.setDate(now.getDate() - 7);
+                    break;
+                case 'month':
+                    startDate = new Date(now);
+                    startDate.setMonth(now.getMonth() - 1);
+                    break;
+                case 'custom':
+                    if (customStartDate && customEndDate) {
+                        const start = new Date(customStartDate);
+                        const end = new Date(customEndDate);
+                        end.setHours(23, 59, 59, 999);
+                        filtered = filtered.filter(gen => {
+                            const genDate = new Date(gen.created_at);
+                            return genDate >= start && genDate <= end;
+                        });
+                    }
+                    break;
+            }
+
+            if (dateRange !== 'custom') {
+                filtered = filtered.filter(gen => {
+                    const genDate = new Date(gen.created_at);
+                    return genDate >= startDate!;
+                });
+            }
+        }
+
+        setFilteredGenerations(filtered);
+    }, [searchQuery, generations, selectedStyle, selectedStatus, dateRange, customStartDate, customEndDate]);
 
     const handleRefine = async () => {
         if (!selectedAsset || !refiningPrompt.trim()) return;
@@ -122,6 +185,56 @@ export const Gallery: React.FC = () => {
             showError('修正の依頼に失敗しました。');
         } finally {
             setIsRefining(false);
+        }
+    };
+
+    const handleDelete = async (generation: Generation) => {
+        if (!confirm('この画像を削除しますか？この操作は取り消せません。')) {
+            return;
+        }
+
+        try {
+            // Delete from database
+            const { error } = await supabase
+                .from('generations')
+                .delete()
+                .eq('id', generation.id);
+
+            if (error) throw error;
+
+            // Try to delete from storage if URL exists
+            if (generation.original_url && generation.original_url.includes('storage')) {
+                try {
+                    const urlParts = generation.original_url.split('/');
+                    const filePath = urlParts.slice(urlParts.indexOf('originals')).join('/');
+                    await supabase.storage.from('images').remove([filePath]);
+                } catch (storageError) {
+                    console.warn('Storage deletion failed:', storageError);
+                    // Continue even if storage deletion fails
+                }
+            }
+
+            if (generation.generated_url && generation.generated_url.includes('storage')) {
+                try {
+                    const urlParts = generation.generated_url.split('/');
+                    const filePath = urlParts.slice(urlParts.indexOf('generated')).join('/');
+                    await supabase.storage.from('images').remove([filePath]);
+                } catch (storageError) {
+                    console.warn('Storage deletion failed:', storageError);
+                }
+            }
+
+            // Remove from local state
+            setGenerations(generations.filter(g => g.id !== generation.id));
+            
+            if (selectedAsset?.id === generation.id) {
+                setSelectedAsset(null);
+            }
+
+            success('画像を削除しました。');
+        } catch (err: any) {
+            console.error('Delete error:', err);
+            showError(err.message || '削除に失敗しました。');
         }
     };
 
@@ -182,11 +295,129 @@ export const Gallery: React.FC = () => {
                             aria-label="スタイルを検索"
                         />
                     </div>
-                    <Button variant="outline" size="sm" className="h-9 rounded-lg px-4">
+                    <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="h-9 rounded-lg px-4"
+                        onClick={() => setShowFilters(!showFilters)}
+                    >
                         <Filter className="h-4 w-4 mr-1.5" /> フィルター
+                        {(selectedStyle !== 'all' || selectedStatus !== 'all' || dateRange !== 'all') && (
+                            <span className="ml-1.5 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                {[selectedStyle !== 'all' ? 1 : 0, selectedStatus !== 'all' ? 1 : 0, dateRange !== 'all' ? 1 : 0].reduce((a, b) => a + b, 0)}
+                            </span>
+                        )}
                     </Button>
                 </div>
             </div>
+
+            {/* Filter Panel */}
+            {showFilters && (
+                <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Style Filter */}
+                        <div>
+                            <label className="text-xs font-medium text-slate-700 mb-2 block">スタイル</label>
+                            <select
+                                value={selectedStyle}
+                                onChange={(e) => setSelectedStyle(e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="all">すべて</option>
+                                {availableStyles.map(style => (
+                                    <option key={style} value={style}>{style}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Status Filter */}
+                        <div>
+                            <label className="text-xs font-medium text-slate-700 mb-2 block">ステータス</label>
+                            <select
+                                value={selectedStatus}
+                                onChange={(e) => setSelectedStatus(e.target.value as GenerationStatus | 'all')}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="all">すべて</option>
+                                <option value="completed">完了</option>
+                                <option value="processing">処理中</option>
+                                <option value="queued">待機中</option>
+                                <option value="failed">失敗</option>
+                            </select>
+                        </div>
+
+                        {/* Date Filter */}
+                        <div>
+                            <label className="text-xs font-medium text-slate-700 mb-2 block">日付</label>
+                            <select
+                                value={dateRange}
+                                onChange={(e) => setDateRange(e.target.value as typeof dateRange)}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                <option value="all">すべて</option>
+                                <option value="today">今日</option>
+                                <option value="week">過去7日</option>
+                                <option value="month">過去30日</option>
+                                <option value="custom">カスタム範囲</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Custom Date Range */}
+                    {dateRange === 'custom' && (
+                        <div className="mt-4 grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-xs font-medium text-slate-700 mb-2 block">開始日</label>
+                                <input
+                                    type="date"
+                                    value={customStartDate}
+                                    onChange={(e) => setCustomStartDate(e.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs font-medium text-slate-700 mb-2 block">終了日</label>
+                                <input
+                                    type="date"
+                                    value={customEndDate}
+                                    onChange={(e) => setCustomEndDate(e.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Clear Filters */}
+                    {(selectedStyle !== 'all' || selectedStatus !== 'all' || dateRange !== 'all') && (
+                        <div className="mt-4 flex justify-end">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    setSelectedStyle('all');
+                                    setSelectedStatus('all');
+                                    setDateRange('all');
+                                    setCustomStartDate('');
+                                    setCustomEndDate('');
+                                }}
+                                className="text-xs"
+                            >
+                                フィルターをクリア
+                            </Button>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Results Count */}
+            {!loading && filteredGenerations.length > 0 && (
+                <div className="text-sm text-slate-600">
+                    {filteredGenerations.length}件の画像を表示中
+                    {filteredGenerations.length !== generations.length && (
+                        <span className="text-slate-400">（全{generations.length}件中）</span>
+                    )}
+                </div>
+            )}
 
             {loading ? (
                 <div className="flex items-center justify-center py-20">
@@ -204,9 +435,9 @@ export const Gallery: React.FC = () => {
                         <div key={asset.id} className="group relative rounded-xl border border-slate-200 bg-white overflow-hidden hover:border-blue-300 hover:shadow-lg transition-all shadow-sm">
                             <div className="aspect-[4/3] overflow-hidden relative bg-slate-100">
                                 {asset.status === 'completed' && asset.generated_url ? (
-                                    <img
-                                        src={asset.generated_url}
-                                        alt={asset.style}
+                            <img
+                                src={asset.generated_url}
+                                alt={asset.style}
                                         className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${asset.is_watermarked ? 'sepia-[0.3]' : ''}`}
                                     />
                                 ) : (
@@ -234,9 +465,10 @@ export const Gallery: React.FC = () => {
                                 )}
                                 {asset.status === 'completed' && asset.generated_url && (
                                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                        <button
-                                            onClick={() => setSelectedAsset(asset)}
+                                <button
+                                    onClick={() => setSelectedAsset(asset)}
                                             className="p-2.5 bg-white text-slate-900 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
+                                            title="詳細を表示"
                                         >
                                             <Maximize2 className="h-4 w-4" />
                                         </button>
@@ -247,40 +479,62 @@ export const Gallery: React.FC = () => {
                                             }}
                                             className={`p-2.5 rounded-lg transition-colors shadow-sm ${asset.is_watermarked ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                                             disabled={asset.is_watermarked}
+                                            title="エクスポート"
                                         >
                                             <Download className="h-4 w-4" />
-                                        </button>
-                                    </div>
-                                )}
+                                </button>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDelete(asset);
+                                            }}
+                                            className="p-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                                            title="削除"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                </button>
                             </div>
+                                )}
+                        </div>
 
                             <div className="p-4 flex items-center justify-between">
-                                <div>
+                            <div>
                                     <h3 className="font-medium text-slate-900">{asset.style}スタイル</h3>
                                     <div className="flex items-center gap-1.5 mt-1">
                                         <History className="h-3 w-3 text-slate-400" />
                                         <p className="text-xs text-slate-500">
                                             {new Date(asset.created_at).toLocaleDateString('ja-JP')}
-                                        </p>
-                                    </div>
+                                    </p>
                                 </div>
+                            </div>
                                 <div className="flex items-center gap-2">
-                                    <span className={`text-xs px-2 py-1 rounded-full ${asset.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                    <span className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${asset.status === 'completed' ? 'bg-green-100 text-green-700' :
                                         asset.status === 'processing' ? 'bg-blue-100 text-blue-700' :
                                             asset.status === 'queued' ? 'bg-yellow-100 text-yellow-700' :
                                                 'bg-red-100 text-red-700'
                                         }`}>
+                                        {asset.status === 'completed' && <CheckCircle2 className="h-3 w-3" />}
+                                        {asset.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin" />}
+                                        {asset.status === 'queued' && <Clock className="h-3 w-3" />}
+                                        {asset.status === 'failed' && <AlertCircle className="h-3 w-3" />}
                                         {asset.status === 'completed' ? '完了' :
                                             asset.status === 'processing' ? '処理中' :
                                                 asset.status === 'queued' ? '待機中' : '失敗'}
                                     </span>
-                                    <button className="text-slate-400 hover:text-slate-600 transition-colors">
-                                        <MoreVertical className="h-4 w-4" />
-                                    </button>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDelete(asset);
+                                        }}
+                                        className="text-slate-400 hover:text-red-600 transition-colors p-1"
+                                        title="削除"
+                                    >
+                                        <Trash2 className="h-4 w-4" />
+                            </button>
                                 </div>
-                            </div>
                         </div>
-                    ))}
+                    </div>
+                ))}
                 </div>
             )}
 
@@ -304,10 +558,10 @@ export const Gallery: React.FC = () => {
                             <div className="w-full h-full">
                                 {selectedAsset.generated_url ? (
                                     <div className="relative w-full h-full">
-                                        <CompareSlider
-                                            originalUrl={selectedAsset.original_url}
-                                            generatedUrl={selectedAsset.generated_url}
-                                        />
+                                <CompareSlider
+                                    originalUrl={selectedAsset.original_url}
+                                    generatedUrl={selectedAsset.generated_url}
+                                />
                                         {selectedAsset.is_watermarked && (
                                             <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-10 select-none overflow-hidden">
                                                 <div className="text-[120px] font-bold -rotate-45 whitespace-nowrap text-slate-900 tracking-[10px]">
@@ -354,6 +608,13 @@ export const Gallery: React.FC = () => {
                                 </div>
                                 <div className="flex gap-2">
                                     <Button variant="outline" onClick={() => setSelectedAsset(null)} className="rounded-lg">閉じる</Button>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => selectedAsset && handleDelete(selectedAsset)}
+                                        className="px-4 rounded-lg font-medium text-red-600 hover:text-red-700 hover:border-red-300"
+                                    >
+                                        <Trash2 className="h-4 w-4 mr-2" /> 削除
+                                    </Button>
                                     {!selectedAsset.is_watermarked && (
                                         <Button
                                             onClick={() => selectedAsset && handleDownload(selectedAsset, false)}
